@@ -11,24 +11,82 @@ from torchvision.utils import save_image
 from data_loader import *
 from config import *
 from model import *
+import os
 
-def train(epoch, model, train_loader, optimizer, num_classes, use_cuda):
-    '''
-    Function to train the autoencoder
-    '''
-    model.train()
-    train_loss = 0
-    for batch_idx, (data, labels) in enumerate(train_loader):
-        data = to_var(data, use_cuda)
-        labels = one_hot(labels, num_classes, use_cuda)
-        recon_batch, mu, logvar = model(data, labels)
-        optimizer.zero_grad()
-        loss = loss_function(recon_batch, data, mu, logvar)
-        loss.backward()
-        train_loss += loss.data
-        optimizer.step()
-        if batch_idx % 500 == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader),
-                loss.data / len(data)))
+data_load = DataLoader(64)
+dl = data_load.loadTrainData()
+
+def reset_grad(P, Q, D):
+    Q.zero_grad()
+    P.zero_grad()
+    D.zero_grad()
+    
+def train(P, Q, D, batch_size, nz, lr=0.001, use_cuda=False):
+    Q_solver = optim.Adam(Q.parameters(), lr=lr)
+    P_solver = optim.Adam(P.parameters(), lr=lr)
+    D_solver = optim.Adam(D.parameters(), lr=lr*0.1)
+    for it in range(100000):
+        for batch_idx, batch_item in enumerate(dl):
+            #X = sample_X(mb_size)
+            """ Reconstruction phase """
+            X = Variable(batch_item[0])
+            if use_cuda:
+                X = X.cuda()
+    
+            z_sample = Q(X)
+    
+            X_sample = P(z_sample)
+            recon_loss = F.mse_loss(X_sample, X)
+    
+            recon_loss.backward()
+            P_solver.step()
+            Q_solver.step()
+            reset_grad(P, Q, D)
+    
+            """ Regularization phase """
+            # Discriminator
+            for _ in range(5):
+                z_real = Variable(torch.randn(batch_size, nz))
+                if use_cuda:
+                    z_real = z_real.cuda()    
+                z_fake = Q(X).view(batch_size,-1)    
+                D_real = D(z_real)
+                D_fake = D(z_fake)    
+                D_loss = -torch.mean(torch.log(D_real) + torch.log(1 - D_fake))    
+                D_loss.backward()
+                D_solver.step()    
+                reset_grad(P, Q, D)
+    
+            # Generator
+            for _ in range(5):
+                z_fake = Q(X).view(batch_size,-1)
+                D_fake = D(z_fake)        
+                G_loss = -torch.mean(torch.log(D_fake))        
+                G_loss.backward()
+                Q_solver.step()
+                reset_grad(P, Q, D)
+    
+            if batch_idx % 10 == 0:
+                print('Iter-{}; D_loss: {:.4}; G_loss: {:.4}; recon_loss: {:.4}'
+                      .format(batch_idx, D_loss.data[0], G_loss.data[0], recon_loss.data[0]))
+                torch.save(Q,"Q_latest.pth")
+                torch.save(P,"P_latest.pth")
+                torch.save(D,"D_latest.pth")
+    
+if __name__ == "__main__":
+    data_load = DataLoader(64)
+    tr_loader = data_load.loadTrainData()
+    l = []
+    for x in tr_loader:
+        l.append(x[0])
+    
+    inp_shape = l[0].shape
+    latent_size = 100
+    hidden_dim = 200
+    class_size=10
+    enc_cfg = Enc_cfg()
+    dec_cfg = Dec_cfg()
+    Q = Encoder(inp_shape, latent_size, class_size, enc_cfg)
+    P = Decoder(inp_shape, latent_size, class_size, dec_cfg)
+    D = Discriminator(latent_size, hidden_dim)
+    train(P, Q, D, 64, 100)

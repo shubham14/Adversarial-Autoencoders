@@ -30,6 +30,7 @@ class DataLoader:
                 datasets.MNIST('./data', train=True, download=True,
                             transform=transforms.ToTensor()),
                 batch_size=self.batch_size, shuffle=True, **kwargs)
+        return train_loader
     
     def to_var(self, x, use_cuda=False):
         x = Variable(x)
@@ -45,3 +46,7 @@ class DataLoader:
         for i, label in enumerate(labels):
             targets[i, label] = 1
         return self.to_var(targets, use_cuda)
+
+if __name__ == "__main__":
+    data_loader = DataLoader(64)
+    tr_loader = data_loader.loadTrainData()
